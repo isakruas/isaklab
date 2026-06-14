@@ -5,7 +5,7 @@
   --bg:        #0d1117;
   --fg:        #e6edf3;
   --muted:     #8b949e;
-  --faint:     #6e7681;
+  --faint:     #7d8590;   /* WCAG AA: 5.07:1 on --bg, 4.64:1 on --code-bg */
   --rule:      #21262d;
   --accent:    #4493f8;
   --code-bg:   #161b22;
@@ -17,13 +17,13 @@
   --measure: 42rem;
 }
 
-/* Dark is the default theme. The toggle can switch to light (data-theme="light").
-   Nothing is stored — the choice lasts only for the current page. */
+/* Dark is the default theme. The toggle can switch to light (data-theme="light")
+   and the choice is remembered in localStorage across pages and visits. */
 :root[data-theme="light"] {
   --bg:        #ffffff;
   --fg:        #1a1a1a;
   --muted:     #6b7280;
-  --faint:     #9aa1ab;
+  --faint:     #6b727b;   /* WCAG AA: 4.86:1 on --bg, 4.57:1 on --code-bg */
   --rule:      #e7e7e9;
   --accent:    #1f6feb;
   --code-bg:   #f6f8fa;
@@ -33,6 +33,24 @@
 * { box-sizing: border-box; }
 
 html { -webkit-text-size-adjust: 100%; }
+
+/* Skip link: off-screen until focused by keyboard. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 10;
+  background: var(--accent);
+  color: #fff;
+  padding: 0.5rem 0.9rem;
+  border-radius: 0 0 6px 0;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  text-decoration: none;
+}
+.skip-link:focus { left: 0; }
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 body {
   margin: 0;
@@ -321,3 +339,39 @@ code, kbd, pre, samp { font-family: var(--mono); }
 .prose pre code { background: none; padding: 0; font-size: inherit; }
 
 .highlight pre { margin: 0; background: none; padding: 0; }
+
+/* ---------- touch targets / small screens ---------- */
+
+/* Give the small mono links in the header and footer a comfortable hit area
+   without disturbing the baseline layout (padding offset by negative margin). */
+.lang-switch a,
+.theme-toggle,
+.site-nav a,
+.site-footer .links a {
+  display: inline-block;
+  padding: 0.5rem 0.15rem;
+  margin: -0.5rem 0;
+}
+
+/* Restore the breathing room after the divider on the theme toggle (the
+   padding shorthand above would otherwise leave "dark" hugging the rule). */
+.theme-toggle {
+  padding-left: 1rem;
+  margin-left: 0.3rem;
+}
+
+@media (max-width: 600px) {
+  body { font-size: 16px; }
+
+  main,
+  .site-header,
+  .site-footer { padding-left: 1rem; padding-right: 1rem; }
+
+  .site-header { gap: 0.5rem 0.75rem; }
+
+  /* Let the language switcher and theme toggle wrap onto their own row
+     instead of crowding the wordmark and nav. */
+  .lang-switch { padding-left: 0.7rem; }
+
+  .site-footer { flex-direction: column; align-items: flex-start; gap: 0.75rem; }
+}

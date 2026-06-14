@@ -55,6 +55,11 @@ SITE = {
         {"label": "linkedin", "href": "https://www.linkedin.com/in/isakruas/"},
         {"label": "id-qsl", "href": "https://id.qsl.br/op/PU3IAR"},
     ],
+    # BCP-47 / Open Graph locales, used for og:locale and og:locale:alternate.
+    "locales": {"en": "en_US", "pt": "pt_BR", "es": "es_ES"},
+    # Optional X/Twitter handle (with @). Leave "" if there is no account —
+    # the twitter:site/creator tags are then omitted rather than faked.
+    "twitter": "",
 }
 
 LANGS = ["en", "pt", "es"]
@@ -74,6 +79,7 @@ I18N = {
         "not_found": "Esta página não existe.",
         "return_home": "Voltar ao início.",
         "feed": "feed",
+        "skip_to_content": "Pular para o conteúdo",
     },
     "en": {
         "name": "English",
@@ -87,6 +93,7 @@ I18N = {
         "not_found": "This page does not exist.",
         "return_home": "Return to the index.",
         "feed": "feed",
+        "skip_to_content": "Skip to content",
     },
     "es": {
         "name": "Español",
@@ -100,6 +107,7 @@ I18N = {
         "not_found": "Esta página no existe.",
         "return_home": "Volver al inicio.",
         "feed": "feed",
+        "skip_to_content": "Saltar al contenido",
     },
 }
 
@@ -178,9 +186,48 @@ def parse_front_matter(text: str) -> tuple[dict, str]:
     return meta, text[match.end():]
 
 
+_IMG_RE = re.compile(r"<img\s+([^>]*?)/?>", re.IGNORECASE)
+
+
+def _enhance_images(html: str) -> str:
+    """Add lazy loading and async decoding to every <img>, and stamp intrinsic
+    width/height for local images so the browser can reserve space (no layout
+    shift). Remote images are left dimensionless — we cannot measure them."""
+
+    def repl(match: re.Match) -> str:
+        attrs = match.group(1)
+        if "loading=" not in attrs:
+            attrs += ' loading="lazy"'
+        if "decoding=" not in attrs:
+            attrs += ' decoding="async"'
+        src = re.search(r'src="([^"]+)"', attrs)
+        if src and "width=" not in attrs and "height=" not in attrs:
+            dims = _local_image_size(src.group(1))
+            if dims:
+                attrs += f' width="{dims[0]}" height="{dims[1]}"'
+        return f"<img {attrs.strip()}>"
+
+    return _IMG_RE.sub(repl, html)
+
+
+def _local_image_size(src: str) -> tuple[int, int] | None:
+    if src.startswith(("http://", "https://", "//", "data:")):
+        return None
+    candidate = STATIC / src.lstrip("/")
+    if not candidate.is_file():
+        return None
+    try:
+        from PIL import Image
+
+        with Image.open(candidate) as im:
+            return im.size
+    except Exception:
+        return None
+
+
 def render_markdown(body: str) -> str:
     md = markdown.Markdown(extensions=MD_EXTENSIONS, extension_configs=MD_CONFIG)
-    return md.convert(body)
+    return _enhance_images(md.convert(body))
 
 
 def slug_from_path(path: Path, meta: dict) -> str:
@@ -297,6 +344,137 @@ def xml_escape(text: str) -> str:
     )
 
 
+def abs_url(path_or_url: str) -> str:
+    """Turn a site-relative path into an absolute https URL; pass through URLs."""
+    if path_or_url.startswith(("http://", "https://")):
+        return path_or_url
+    if not path_or_url.startswith("/"):
+        path_or_url = "/" + path_or_url
+    return SITE["url"] + path_or_url
+
+
+def absolutize_html(html: str) -> str:
+    """Rewrite root-relative href/src to absolute URLs, for feed readers that
+    do not resolve against a base."""
+    return re.sub(r'(href|src)="(/[^"]*)"', rf'\1="{SITE["url"]}\2"', html)
+
+
+def resolved_image(lang: str, meta: dict) -> str:
+    """Absolute URL of a document's social image: an explicit `image:` from the
+    front matter, otherwise the generated per-language Open Graph card."""
+    custom = str(meta.get("image", "")).strip()
+    return abs_url(custom) if custom else f"{SITE['url']}/og-{lang}.png"
+
+
+def x_default_from(langs: list[dict]) -> str:
+    """The hreflang=x-default target: the default-language version of this page."""
+    for entry in langs:
+        if entry["code"] == DEFAULT_LANG:
+            return entry["href"]
+    return f"/{DEFAULT_LANG}/"
+
+
+# --------------------------------------------------------------------------- #
+# Structured data (schema.org JSON-LD)                                         #
+# --------------------------------------------------------------------------- #
+
+
+def person_node() -> dict:
+    return {
+        "@type": "Person",
+        "@id": SITE["url"] + "/#person",
+        "name": SITE["author"],
+        "url": SITE["url"],
+        "image": SITE["url"] + "/icon-512.png",
+        "sameAs": [s["href"] for s in SITE["social"]],
+    }
+
+
+def breadcrumb_node(trail: list[tuple[str, str]]) -> dict:
+    return {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+            {"@type": "ListItem", "position": i + 1, "name": name, "item": abs_url(url)}
+            for i, (name, url) in enumerate(trail)
+        ],
+    }
+
+
+def website_node(lang: str) -> dict:
+    return {
+        "@type": "WebSite",
+        "@id": SITE["url"] + "/#website",
+        "name": SITE["title"],
+        "url": SITE["url"],
+        "inLanguage": lang,
+        "description": I18N[lang]["tagline"],
+        "publisher": {"@id": SITE["url"] + "/#person"},
+    }
+
+
+def index_jsonld(lang: str, posts: list["Post"]) -> dict:
+    blog = {
+        "@type": "Blog",
+        "@id": f"{SITE['url']}/{lang}/#blog",
+        "name": SITE["title"],
+        "url": f"{SITE['url']}/{lang}/",
+        "inLanguage": lang,
+        "description": I18N[lang]["tagline"],
+        "publisher": {"@id": SITE["url"] + "/#person"},
+        "blogPost": [
+            {
+                "@type": "BlogPosting",
+                "headline": p.title,
+                "url": abs_url(p.url),
+                "datePublished": p.iso_date,
+                "inLanguage": lang,
+            }
+            for p in posts
+        ],
+    }
+    return {"@context": "https://schema.org", "@graph": [person_node(), website_node(lang), blog]}
+
+
+def post_jsonld(lang: str, post: "Post", image: str) -> dict:
+    article = {
+        "@type": "BlogPosting",
+        "@id": abs_url(post.url) + "#article",
+        "headline": post.title,
+        "description": post.summary,
+        "url": abs_url(post.url),
+        "datePublished": post.iso_date,
+        "dateModified": post.iso_date,
+        "inLanguage": lang,
+        "image": image,
+        "author": {"@id": SITE["url"] + "/#person"},
+        "publisher": {"@id": SITE["url"] + "/#person"},
+        "isPartOf": {"@id": SITE["url"] + "/#website"},
+        "mainEntityOfPage": {"@type": "WebPage", "@id": abs_url(post.url)},
+    }
+    if post.tags:
+        article["keywords"] = post.tags
+    trail = breadcrumb_node([(SITE["title"], f"/{lang}/"),
+                             (I18N[lang]["nav_posts"], f"/{lang}/"),
+                             (post.title, post.url)])
+    return {"@context": "https://schema.org", "@graph": [person_node(), article, trail]}
+
+
+def page_jsonld(lang: str, page: "Document", image: str) -> dict:
+    node = {
+        "@type": "WebPage",
+        "@id": abs_url(page.url),
+        "name": page.title,
+        "description": page.summary or I18N[lang]["tagline"],
+        "url": abs_url(page.url),
+        "inLanguage": lang,
+        "image": image,
+        "isPartOf": {"@id": SITE["url"] + "/#website"},
+        "about": {"@id": SITE["url"] + "/#person"},
+    }
+    trail = breadcrumb_node([(SITE["title"], f"/{lang}/"), (page.title, page.url)])
+    return {"@context": "https://schema.org", "@graph": [person_node(), node, trail]}
+
+
 # --------------------------------------------------------------------------- #
 # Build                                                                       #
 # --------------------------------------------------------------------------- #
@@ -332,28 +510,37 @@ def build(include_drafts: bool = False) -> None:
         counts[lang] = (len(posts), len(pages))
 
         all_tags = sorted({tag for p in posts for tag in p.tags})
+        index_langs = page_switcher(lang, "", set(LANGS))
         write(
             OUTPUT / lang / "index.html",
             index_tpl.render(
                 path=f"/{lang}/", posts=posts, all_tags=all_tags,
-                langs=page_switcher(lang, "", set(LANGS)), **ctx,
+                langs=index_langs, x_default=x_default_from(index_langs),
+                og_image=resolved_image(lang, {}), jsonld=index_jsonld(lang, posts),
+                **ctx,
             ),
         )
         for post in posts:
+            post_langs_sw = page_switcher(lang, f"posts/{post.slug}/", post_langs[post.slug])
+            image = resolved_image(lang, post.meta)
             write(
                 OUTPUT / lang / "posts" / post.slug / "index.html",
                 post_tpl.render(
                     path=post.url, post=post,
-                    langs=page_switcher(lang, f"posts/{post.slug}/", post_langs[post.slug]),
+                    langs=post_langs_sw, x_default=x_default_from(post_langs_sw),
+                    og_image=image, jsonld=post_jsonld(lang, post, image),
                     **ctx,
                 ),
             )
         for page in pages:
+            page_langs_sw = page_switcher(lang, f"{page.slug}/", page_langs[page.slug])
+            image = resolved_image(lang, page.meta)
             write(
                 OUTPUT / lang / page.slug / "index.html",
                 page_tpl.render(
                     path=page.url, page=page,
-                    langs=page_switcher(lang, f"{page.slug}/", page_langs[page.slug]),
+                    langs=page_langs_sw, x_default=x_default_from(page_langs_sw),
+                    og_image=image, jsonld=page_jsonld(lang, page, image),
                     **ctx,
                 ),
             )
@@ -361,22 +548,29 @@ def build(include_drafts: bool = False) -> None:
 
     # Root: redirect to the default language.
     write(OUTPUT / "index.html", render_redirect(f"/{DEFAULT_LANG}/"))
-    write(OUTPUT / "feed.xml", build_rss(DEFAULT_LANG, posts_by_lang[DEFAULT_LANG]))
+    write(OUTPUT / "feed.xml",
+          build_rss(DEFAULT_LANG, posts_by_lang[DEFAULT_LANG], feed_path="/feed.xml"))
 
     # 404 (GitHub Pages serves /404.html); use the default language.
     ctx = base_context(DEFAULT_LANG)
+    nf_langs = page_switcher(DEFAULT_LANG, "", set(LANGS))
     write(OUTPUT / "404.html", env.get_template("404.html").render(
-        path="/404.html", langs=page_switcher(DEFAULT_LANG, "", set(LANGS)), **ctx))
+        path="/404.html", langs=nf_langs, x_default=x_default_from(nf_langs),
+        og_image=resolved_image(DEFAULT_LANG, {}), jsonld=None, **ctx))
 
     # Sitemap, robots, highlight stylesheet.
-    write(OUTPUT / "sitemap.xml", build_sitemap(include_drafts))
+    write(OUTPUT / "sitemap.xml",
+          build_sitemap(posts_by_lang, pages_by_lang, post_langs, page_langs))
     write(OUTPUT / "robots.txt",
           f"User-agent: *\nAllow: /\nSitemap: {SITE['url']}/sitemap.xml\n")
     write(OUTPUT / "highlight.css", build_highlight_css())
+    write(OUTPUT / "site.webmanifest", build_webmanifest())
 
     # Static assets and host config.
     if STATIC.exists():
         shutil.copytree(STATIC, OUTPUT, dirs_exist_ok=True)
+    build_og_assets(OUTPUT)  # social cards + maskable PWA icons
+    minify_assets(OUTPUT)    # collapse CSS/JS after everything is in place
     (OUTPUT / ".nojekyll").write_text("", encoding="utf-8")
     (OUTPUT / "CNAME").write_text(SITE["url"].split("://", 1)[-1] + "\n", encoding="utf-8")
 
@@ -385,16 +579,24 @@ def build(include_drafts: bool = False) -> None:
 
 
 def render_redirect(target: str) -> str:
+    alts = "".join(
+        f'<link rel="alternate" hreflang="{l}" href="{SITE["url"]}/{l}/">'
+        for l in LANGS
+    )
     return (
         "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\">"
         f"<meta http-equiv=\"refresh\" content=\"0; url={target}\">"
         f"<link rel=\"canonical\" href=\"{SITE['url']}{target}\">"
+        + alts
+        + f'<link rel="alternate" hreflang="x-default" href="{SITE["url"]}{target}">'
         f"<script>location.replace(\"{target}\")</script>"
         f"</head><body><a href=\"{target}\">{SITE['title']}</a></body></html>"
     )
 
 
-def build_rss(lang: str, posts: list[Post]) -> str:
+def build_rss(lang: str, posts: list[Post], feed_path: str | None = None) -> str:
+    feed_path = feed_path or f"/{lang}/feed.xml"
+    self_url = f"{SITE['url']}{feed_path}"
     now = email.utils.format_datetime(dt.datetime.now(dt.timezone.utc))
     items = []
     for post in posts[:30]:
@@ -402,42 +604,133 @@ def build_rss(lang: str, posts: list[Post]) -> str:
             dt.datetime.combine(post.date, dt.time(12, 0), dt.timezone.utc)
         )
         link = f"{SITE['url']}{post.url}"
+        categories = "".join(
+            f"<category>{xml_escape(tag)}</category>" for tag in post.tags
+        )
+        content = absolutize_html(post.html).replace("]]>", "]]]]><![CDATA[>")
         items.append(
             "<item>"
             f"<title>{xml_escape(post.title)}</title>"
             f"<link>{link}</link>"
             f"<guid isPermaLink=\"true\">{link}</guid>"
             f"<pubDate>{pub}</pubDate>"
-            f"<description>{xml_escape(post.summary)}</description>"
+            f"<dc:creator>{xml_escape(SITE['author'])}</dc:creator>"
+            + categories
+            + f"<description>{xml_escape(post.summary)}</description>"
+            f"<content:encoded><![CDATA[{content}]]></content:encoded>"
             "</item>"
         )
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
-        '<rss version="2.0"><channel>'
+        '<rss version="2.0" '
+        'xmlns:atom="http://www.w3.org/2005/Atom" '
+        'xmlns:dc="http://purl.org/dc/elements/1.1/" '
+        'xmlns:content="http://purl.org/rss/1.0/modules/content/">'
+        "<channel>"
         f"<title>{xml_escape(SITE['title'])}</title>"
         f"<link>{SITE['url']}/{lang}/</link>"
+        f'<atom:link href="{self_url}" rel="self" type="application/rss+xml"/>'
         f"<language>{lang}</language>"
         f"<description>{xml_escape(I18N[lang]['tagline'])}</description>"
         f"<lastBuildDate>{now}</lastBuildDate>"
+        "<generator>build.py</generator>"
+        "<docs>https://www.rssboard.org/rss-specification</docs>"
+        f"<ttl>1440</ttl>"
         + "".join(items)
         + "</channel></rss>"
     )
 
 
-def build_sitemap(include_drafts: bool) -> str:
-    urls = [SITE["url"] + "/"]
-    for lang in LANGS:
-        urls.append(f"{SITE['url']}/{lang}/")
-        for post in load_posts(lang, include_drafts):
-            urls.append(f"{SITE['url']}{post.url}")
-        for page in load_pages(lang):
-            urls.append(f"{SITE['url']}{page.url}")
-    body = "".join(f"<url><loc>{xml_escape(u)}</loc></url>" for u in urls)
+def _iso(d: dt.date | None) -> str | None:
+    return d.isoformat() if d else None
+
+
+def _iso_from_mtime(path: Path) -> str:
+    ts = path.stat().st_mtime
+    return dt.datetime.fromtimestamp(ts, dt.timezone.utc).date().isoformat()
+
+
+def build_sitemap(posts_by_lang: dict, pages_by_lang: dict,
+                  post_langs: dict, page_langs: dict) -> str:
+    """Sitemaps.org 0.9 with per-URL hreflang alternates (Google's multilingual
+    annotation) and W3C-datetime <lastmod>. Every translation of a document
+    lists all its siblings plus x-default."""
+    entries: list[str] = []
+
+    def url_block(loc: str, lastmod: str | None, changefreq: str, priority: str,
+                  alternates: list[tuple[str, str]]) -> str:
+        links = "".join(
+            f'<xhtml:link rel="alternate" hreflang="{hl}" '
+            f'href="{xml_escape(abs_url(href))}"/>'
+            for hl, href in alternates
+        )
+        lm = f"<lastmod>{lastmod}</lastmod>" if lastmod else ""
+        return (f"<url><loc>{xml_escape(abs_url(loc))}</loc>{lm}"
+                f"<changefreq>{changefreq}</changefreq>"
+                f"<priority>{priority}</priority>{links}</url>")
+
+    def emit_group(url_for, group_langs: set, lastmod_for,
+                   changefreq: str, priority: str) -> None:
+        present = [l for l in LANGS if l in group_langs]
+        alternates = [(l, url_for(l)) for l in present]
+        xdef = url_for(DEFAULT_LANG) if DEFAULT_LANG in group_langs else f"/{DEFAULT_LANG}/"
+        alternates.append(("x-default", xdef))
+        for l in present:
+            entries.append(
+                url_block(url_for(l), lastmod_for(l), changefreq, priority, alternates))
+
+    # Language homes — lastmod is the newest post in that language.
+    def home_lastmod(l: str) -> str | None:
+        return _iso(max((p.date for p in posts_by_lang.get(l, [])), default=None))
+
+    emit_group(lambda l: f"/{l}/", set(LANGS), home_lastmod, "weekly", "1.0")
+
+    # Posts.
+    post_date = {(p.lang, p.slug): p.date
+                 for ps in posts_by_lang.values() for p in ps}
+    for slug, glangs in sorted(post_langs.items()):
+        emit_group(lambda l, s=slug: f"/{l}/posts/{s}/", glangs,
+                   lambda l, s=slug: _iso(post_date.get((l, s))), "monthly", "0.8")
+
+    # Standalone pages — lastmod from source file mtime.
+    page_mtime = {(l, pg.slug): _iso_from_mtime(pg.source)
+                  for l, pages in pages_by_lang.items() for pg in pages}
+    for slug, glangs in sorted(page_langs.items()):
+        emit_group(lambda l, s=slug: f"/{l}/{s}/", glangs,
+                   lambda l, s=slug: page_mtime.get((l, s)), "monthly", "0.5")
+
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
-        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
-        + body + "</urlset>"
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" '
+        'xmlns:xhtml="http://www.w3.org/1999/xhtml">'
+        + "".join(entries) + "</urlset>"
     )
+
+
+def build_webmanifest() -> str:
+    import json
+
+    data = {
+        "name": SITE["title"],
+        "short_name": SITE["title"],
+        "description": I18N[DEFAULT_LANG]["tagline"],
+        "lang": DEFAULT_LANG,
+        "dir": "ltr",
+        "start_url": f"/{DEFAULT_LANG}/",
+        "scope": "/",
+        "id": "/",
+        "display": "standalone",
+        "background_color": "#0d1117",
+        "theme_color": "#0d1117",
+        "icons": [
+            {"src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any"},
+            {"src": "/favicon-32.png", "sizes": "32x32", "type": "image/png"},
+            {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+            {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"},
+            {"src": "/apple-touch-icon.png", "sizes": "180x180", "type": "image/png"},
+        ],
+    }
+    return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
 
 
 def build_highlight_css() -> str:
@@ -447,6 +740,126 @@ def build_highlight_css() -> str:
         'html[data-theme="light"] .highlight'
     )
     return "/* generated by build.py — do not edit */\n" + dark + "\n" + light + "\n"
+
+
+# --------------------------------------------------------------------------- #
+# Asset minification                                                          #
+# --------------------------------------------------------------------------- #
+
+
+def _minify_css(css: str) -> str:
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)   # comments
+    css = re.sub(r"\s+", " ", css)                          # collapse whitespace
+    css = re.sub(r"\s*([{}:;,>~+])\s*", r"\1", css)         # trim around tokens
+    css = css.replace(";}", "}")                            # drop trailing semicolons
+    return css.strip()
+
+
+def _minify_js(js: str) -> str:
+    # Conservative: keep newlines (so automatic semicolon insertion is safe),
+    # drop indentation, blank lines, full-line // comments, and block comments.
+    js = re.sub(r"/\*.*?\*/", "", js, flags=re.DOTALL)
+    lines = []
+    for line in js.splitlines():
+        s = line.strip()
+        if s and not s.startswith("//"):
+            lines.append(s)
+    return "\n".join(lines)
+
+
+def minify_assets(output: Path) -> None:
+    for path in output.rglob("*.css"):
+        path.write_text(_minify_css(path.read_text(encoding="utf-8")), encoding="utf-8")
+    for path in output.rglob("*.js"):
+        path.write_text(_minify_js(path.read_text(encoding="utf-8")), encoding="utf-8")
+
+
+# --------------------------------------------------------------------------- #
+# Generated images: Open Graph social cards + maskable PWA icons              #
+# --------------------------------------------------------------------------- #
+
+_FONT_DIRS = [
+    "/usr/share/fonts/truetype/dejavu",
+    "/usr/share/fonts/dejavu",
+    "/usr/share/fonts/TTF",
+    "/Library/Fonts",
+    "/System/Library/Fonts/Supplemental",
+]
+
+
+def _load_font(names: list[str], size: int):
+    from PIL import ImageFont
+
+    for name in names:
+        for d in _FONT_DIRS:
+            path = Path(d) / name
+            if path.is_file():
+                return ImageFont.truetype(str(path), size)
+    return ImageFont.load_default()
+
+
+def _wrap(draw, text: str, font, max_width: int) -> list[str]:
+    words, lines, line = text.split(), [], ""
+    for word in words:
+        trial = f"{line} {word}".strip()
+        if draw.textlength(trial, font=font) <= max_width or not line:
+            line = trial
+        else:
+            lines.append(line)
+            line = word
+    if line:
+        lines.append(line)
+    return lines
+
+
+def build_og_assets(output: Path) -> None:
+    """Render the 1200×630 Open Graph cards (one per language) and the 192/512
+    maskable PWA icons. Degrades to a no-op if Pillow is unavailable."""
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError:
+        print("warning: Pillow not installed — skipping OG cards and PWA icons")
+        return
+
+    BG, FG, MUTED, FAINT, ACCENT = "#0d1117", "#e6edf3", "#8b949e", "#6e7681", "#1f6feb"
+    mono_bold = ["DejaVuSansMono-Bold.ttf", "DejaVuSans-Bold.ttf"]
+    sans = ["DejaVuSans.ttf"]
+
+    # --- Open Graph cards, per language ---------------------------------- #
+    f_word = _load_font(mono_bold, 112)
+    f_badge = _load_font(mono_bold, 92)
+    f_tag = _load_font(sans, 38)
+    f_foot = _load_font(mono_bold, 28)
+
+    for lang in LANGS:
+        img = Image.new("RGB", (1200, 630), BG)
+        d = ImageDraw.Draw(img)
+        # "ik" badge, matching favicon.svg.
+        d.rounded_rectangle((90, 84, 246, 240), radius=34, fill=ACCENT)
+        bx = d.textbbox((0, 0), "ik", font=f_badge)
+        d.text((168 - (bx[2] - bx[0]) / 2, 162 - (bx[3] - bx[1]) / 2 - bx[1]),
+               "ik", font=f_badge, fill="#ffffff")
+        # Wordmark.
+        d.text((90, 300), SITE["title"], font=f_word, fill=FG)
+        # Tagline (wrapped).
+        y = 440
+        for line in _wrap(d, I18N[lang]["tagline"], f_tag, 1020)[:3]:
+            d.text((92, y), line, font=f_tag, fill=MUTED)
+            y += 52
+        # Footer.
+        d.text((92, 560), f"{SITE['author']} · {SITE['callsign']} · "
+               f"{SITE['url'].split('://')[-1]}", font=f_foot, fill=FAINT)
+        img.save(output / f"og-{lang}.png", optimize=True)
+
+    # --- Maskable PWA icons --------------------------------------------- #
+    for size in (192, 512):
+        img = Image.new("RGB", (size, size), ACCENT)
+        d = ImageDraw.Draw(img)
+        f = _load_font(mono_bold, int(size * 0.42))
+        bb = d.textbbox((0, 0), "ik", font=f)
+        d.text((size / 2 - (bb[2] - bb[0]) / 2, size / 2 - (bb[3] - bb[1]) / 2 - bb[1]),
+               "ik", font=f, fill="#ffffff")
+        img.save(output / f"icon-{size}.png", optimize=True)
 
 
 # --------------------------------------------------------------------------- #
