@@ -7,6 +7,9 @@
   <meta name="description" content="{% block description %}{{ t.tagline }}{% endblock %}">
   <meta name="author" content="{{ site.author }}">
   <meta name="robots" content="{% block robots %}index, follow, max-image-preview:large{% endblock %}">
+  {% for name, value in site.verification.items() if value %}
+  <meta name="{{ name }}" content="{{ value }}">
+  {% endfor %}
   <meta name="theme-color" content="#0d1117" media="(prefers-color-scheme: dark)">
   <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
   <link rel="icon" href="/favicon.ico" sizes="32x32">
@@ -87,6 +90,14 @@
     <div class="colophon">{{ site.author }} · {{ site.callsign }}</div>
   </footer>
   <script src="/theme.js" defer></script>
+  <script>
+    // Register the offline service worker (network-first; never caches HTML).
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", function () {
+        navigator.serviceWorker.register("/sw.js").catch(function () {});
+      });
+    }
+  </script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

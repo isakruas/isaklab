@@ -75,6 +75,15 @@ Every build generates, with no manual step:
 - Per-page canonical, `hreflang`, Open Graph / Twitter Card meta, and
   schema.org JSON-LD (`WebSite`/`Blog`, `BlogPosting`, `WebPage`,
   `BreadcrumbList`).
+- `.well-known/security.txt` (RFC 9116), and a `sw.js` service worker that
+  serves static assets offline (network-first; HTML is never cached).
+
+`validate.py` runs in CI after the build and fails the deploy if anything is
+broken — malformed XML/JSON, invalid JSON-LD, missing required files, or a
+dangling internal link. Run it locally with `python validate.py public`.
+
+To verify domain ownership in Google Search Console or Bing, paste the token
+into `SITE["verification"]` in `build.py`; empty entries emit no tag.
 
 CSS and JS are minified on build. Set `SITE["twitter"]` to an `@handle` to emit
 `twitter:site`/`twitter:creator` (left empty by default, so the tags are

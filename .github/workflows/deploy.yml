@@ -25,6 +25,7 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - run: python build.py
+      - run: python validate.py public
       - uses: actions/upload-pages-artifact@v3
         with:
           path: public
