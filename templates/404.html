@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}404 · {{ site.title }}{% endblock %}
+{% block content %}
+<article class="post">
+  <header class="post-header"><h1>404</h1></header>
+  <div class="prose"><p>{{ t.not_found }} <a href="/{{ lang }}/">{{ t.return_home }}</a></p></div>
+</article>
+{% endblock %}

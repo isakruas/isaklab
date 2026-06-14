@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}{{ post.title }} · {{ site.title }}{% endblock %}
+{% block description %}{{ post.summary or t.tagline }}{% endblock %}
+{% block og_title %}{{ post.title }}{% endblock %}
+{% block og_description %}{{ post.summary or t.tagline }}{% endblock %}
+{% block og_type %}article{% endblock %}
+{% block content %}
+<article class="post">
+  <header class="post-header">
+    <h1>{{ post.title }}</h1>
+    <div class="post-meta">
+      <time datetime="{{ post.iso_date }}">{{ post.display_date }}</time>
+      {% if post.tags %}
+      <span class="tags">{% for tag in post.tags %}<span class="tag">{{ tag }}</span>{% endfor %}</span>
+      {% endif %}
+    </div>
+  </header>
+  <div class="prose">
+    {{ post.html | safe }}
+  </div>
+</article>
+<p class="back"><a href="/{{ lang }}/">← {{ t.all_posts }}</a></p>
+{% endblock %}

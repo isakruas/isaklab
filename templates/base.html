@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="{{ lang }}">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}{{ site.title }}{% endblock %}</title>
+  <meta name="description" content="{% block description %}{{ t.tagline }}{% endblock %}">
+  <meta name="author" content="{{ site.author }}">
+  <link rel="icon" href="/favicon.ico" sizes="32x32">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="canonical" href="{{ site.url }}{{ path }}">
+  <link rel="alternate" type="application/rss+xml" title="{{ site.title }}" href="/{{ lang }}/feed.xml">
+  {% for l in langs %}
+  <link rel="alternate" hreflang="{{ l.code }}" href="{{ site.url }}/{{ l.code }}/">
+  {% endfor %}
+  <meta property="og:title" content="{% block og_title %}{{ site.title }}{% endblock %}">
+  <meta property="og:description" content="{% block og_description %}{{ t.tagline }}{% endblock %}">
+  <meta property="og:type" content="{% block og_type %}website{% endblock %}">
+  <meta property="og:url" content="{{ site.url }}{{ path }}">
+  <meta property="og:locale" content="{{ lang }}">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/highlight.css">
+  <script>document.documentElement.className += " js";</script>
+</head>
+<body>
+  <header class="site-header">
+    <a class="wordmark" href="/{{ lang }}/">{{ site.title }}</a>
+    <nav class="site-nav">
+      {% for item in nav %}
+      <a href="{{ item.href }}">{{ item.label }}</a>
+      {% endfor %}
+    </nav>
+    <nav class="lang-switch">
+      {% for l in langs %}
+      <a href="{{ l.href }}" hreflang="{{ l.code }}"{% if l.active %} class="active" aria-current="true"{% endif %}>{{ l.code }}</a>
+      {% endfor %}
+    </nav>
+    <button class="theme-toggle" type="button" aria-label="Toggle color theme">dark</button>
+  </header>
+
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="site-footer">
+    <div class="links">
+      {% for link in links %}
+      <a href="{{ link.href }}">{{ link.label }}</a>
+      {% endfor %}
+    </div>
+    <div class="colophon">{{ site.author }} · {{ site.callsign }}</div>
+  </footer>
+  <script src="/theme.js" defer></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>
