@@ -291,6 +291,15 @@ button.tag.active { color: var(--accent); border-color: var(--accent); }
 
 .prose img { max-width: 100%; height: auto; border-radius: 4px; }
 
+/* Themed frame so the (dark) poster/video stays distinct on the light theme. */
+.prose video {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
 .prose blockquote {
   margin-left: 0;
   padding-left: 1rem;
